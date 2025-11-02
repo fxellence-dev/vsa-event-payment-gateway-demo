@@ -1,0 +1,120 @@
+package com.vsa.paymentgateway.integration;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vsa.paymentgateway.customer.api.CustomerController;
+import com.vsa.paymentgateway.gateway.PaymentGatewayApplication;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureWebMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+/**
+ * Integration test demonstrating the complete VSA payment flow
+ */
+@SpringBootTest(classes = PaymentGatewayApplication.class)
+@AutoConfigureWebMvc
+@ActiveProfiles("test")
+@Transactional
+public class PaymentGatewayIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Test
+    public void shouldCompleteFullPaymentFlow() throws Exception {
+        // Step 1: Register a customer
+        CustomerController.RegisterCustomerRequest customerRequest = new CustomerController.RegisterCustomerRequest();
+        customerRequest.setCustomerName("John Doe");
+        customerRequest.setEmail("john.doe@example.com");
+        customerRequest.setPhoneNumber("+1-555-123-4567");
+        customerRequest.setAddress("123 Main St, Anytown, USA");
+
+        String customerResponse = mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(customerRequest)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String customerId = customerResponse.replace("\"", "");
+
+        // Step 2: Add payment method
+        CustomerController.AddPaymentMethodRequest paymentMethodRequest = new CustomerController.AddPaymentMethodRequest();
+        paymentMethodRequest.setCardNumber("4111111111111111");
+        paymentMethodRequest.setExpiryMonth("12");
+        paymentMethodRequest.setExpiryYear("25");
+        paymentMethodRequest.setCvv("123");
+        paymentMethodRequest.setCardHolderName("John Doe");
+        paymentMethodRequest.setDefault(true);
+
+        mockMvc.perform(post("/api/customers/" + customerId + "/payment-methods")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(paymentMethodRequest)))
+                .andExpect(status().isOk());
+
+        // Step 3: Verify customer was created and payment method added
+        mockMvc.perform(get("/api/customers/" + customerId + "/with-payment-methods"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value(customerId))
+                .andExpect(jsonPath("$.customerName").value("John Doe"))
+                .andExpect(jsonPath("$.email").value("john.doe@example.com"))
+                .andExpect(jsonPath("$.paymentMethods").isArray())
+                .andExpect(jsonPath("$.paymentMethods[0].maskedCardNumber").value("**** **** **** 1111"))
+                .andExpect(jsonPath("$.paymentMethods[0].cardType").value("VISA"))
+                .andExpect(jsonPath("$.paymentMethods[0].default").value(true));
+
+        // Step 4: Query all customers to verify data consistency
+        mockMvc.perform(get("/api/customers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+    }
+
+    @Test
+    public void shouldHandleInvalidCustomerRegistration() throws Exception {
+        // Test with invalid email
+        CustomerController.RegisterCustomerRequest invalidRequest = new CustomerController.RegisterCustomerRequest();
+        invalidRequest.setCustomerName("John Doe");
+        invalidRequest.setEmail("invalid-email");
+        invalidRequest.setPhoneNumber("+1-555-123-4567");
+        invalidRequest.setAddress("123 Main St");
+
+        mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    public void shouldPreventDuplicateCustomerRegistration() throws Exception {
+        // Register first customer
+        CustomerController.RegisterCustomerRequest customerRequest = new CustomerController.RegisterCustomerRequest();
+        customerRequest.setCustomerName("Jane Doe");
+        customerRequest.setEmail("jane.doe@example.com");
+        customerRequest.setPhoneNumber("+1-555-987-6543");
+        customerRequest.setAddress("456 Oak Ave");
+
+        mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(customerRequest)))
+                .andExpect(status().isCreated());
+
+        // Try to register customer with same email
+        mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(customerRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("already exists")));
+    }
+}
