@@ -18,34 +18,34 @@
 ### High-Level Architecture
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Client Applications                       │
-│              (Web, Mobile, API Consumers)                    │
+│                    Client Applications                      │
+│              (Web, Mobile, API Consumers)                   │
 └──────────────────────┬──────────────────────────────────────┘
                        │ REST API (Port 8080)
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Gateway API Application (Monolith)              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │        Vertical Slice Architecture (VSA Modules)      │  │
-│  │  ┌──────┬──────────┬──────────┬──────────┬─────────┐ │  │
-│  │  │Cust  │  Auth    │Orchestr  │Process   │Settle   │ │  │
-│  │  │omer  │orization │ation     │ing       │ment     │ │  │
-│  │  │  ✓   │    ✓     │  (Saga)  │   ✓      │   ✓     │ │  │
-│  │  │      │          │    ✓     │          │         │ │  │
-│  │  └──────┴──────────┴──────────┴──────────┴─────────┘ │  │
-│  │                                                        │  │
-│  │  ┌────────────────────────────────────────────────┐  │  │
-│  │  │        Axon Framework (CQRS/Event Sourcing)    │  │  │
-│  │  │  • Command Bus  • Event Bus  • Query Bus       │  │  │
-│  │  │  • JPA Event Store  • Saga Engine              │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  │                                                        │  │
-│  │  All 5 VSA Modules Fully Implemented!                 │  │
-│  │  • Real Aggregates  • Event Handlers                  │  │
-│  │  • Full Saga with Compensation Logic                  │  │
-│  │  Single JVM • Single JAR Deployment                   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└───────┬─────────────────────────────┬──────────────────────┘
+│              Gateway API Application (Monolith)             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │        Vertical Slice Architecture (VSA Modules)     │   │
+│  │  ┌──────┬──────────┬──────────┬──────────┬─────────┐ │   │
+│  │  │Cust  │  Auth    │Orchestr  │Process   │Settle   │ │   │
+│  │  │omer  │orization │ation     │ing       │ment     │ │   │
+│  │  │  ✓   │    ✓     │  (Saga)  │   ✓      │   ✓     │ │   │
+│  │  │      │          │    ✓     │          │         │ │   │
+│  │  └──────┴──────────┴──────────┴──────────┴─────────┘ │   │
+│  │                                                      │   │
+│  │  ┌────────────────────────────────────────────────┐  │   │
+│  │  │        Axon Framework (CQRS/Event Sourcing)    │  │   │
+│  │  │  • Command Bus  • Event Bus  • Query Bus       │  │   │
+│  │  │  • JPA Event Store  • Saga Engine              │  │   │
+│  │  └────────────────────────────────────────────────┘  │   │
+│  │                                                      │   │
+│  │  All 5 VSA Modules Fully Implemented!                │   │
+│  │  • Real Aggregates  • Event Handlers                 │   │
+│  │  • Full Saga with Compensation Logic                 │   │
+│  │  Single JVM • Single JAR Deployment                  │   │
+│  └──────────────────────────────────────────────────────┘   │
+└───────┬─────────────────────────────┬─────────────────────-─┘
         │                             │
         ▼                             ▼
 ┌──────────────────┐         ┌──────────────────┐
@@ -419,14 +419,14 @@ Despite having multiple Maven modules, this is a **MONOLITH**:
 ```
 ┌─────────────────────────────────────────┐
 │  gateway-api-1.0.0-SNAPSHOT.jar         │
-│  ┌─────────────────────────────────┐   │
-│  │  customer-service.jar           │   │
-│  │  authorization-service.jar      │   │
-│  │  orchestration-service.jar      │   │
-│  │  processing-service.jar ✅      │   │
-│  │  settlement-service.jar ✅      │   │
-│  │  payment-gateway-common.jar     │   │
-│  └─────────────────────────────────┘   │
+│  ┌─────────────────────────────────┐    │
+│  │  customer-service.jar           │    │
+│  │  authorization-service.jar      │    │
+│  │  orchestration-service.jar      │    │
+│  │  processing-service.jar ✅       │    │
+│  │  settlement-service.jar ✅       │    | 
+│  │  payment-gateway-common.jar     │    │
+│  └─────────────────────────────────┘    │
 │                                         │
 │  Single JVM Process                     │
 │  Single Database Connection Pool        │

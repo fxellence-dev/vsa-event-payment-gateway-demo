@@ -20,22 +20,22 @@
 #### Traditional Layered Architecture (Horizontal Slices)
 ```
 ┌─────────────────────────────────────────────────┐
-│              Controllers Layer                   │
-│  CustomerController │ PaymentController │ etc.   │
+│              Controllers Layer                  │
+│  CustomerController │ PaymentController │ etc.  │
 └─────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────┐
-│              Services Layer                      │
-│  CustomerService │ PaymentService │ etc.         │
+│              Services Layer                     │
+│  CustomerService │ PaymentService │ etc.        │
 └─────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────┐
-│              Repository Layer                    │
-│  CustomerRepository │ PaymentRepository │ etc.   │
+│              Repository Layer                   │
+│  CustomerRepository │ PaymentRepository │ etc.  │
 └─────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────┐
-│              Database Layer                      │
+│              Database Layer                     │
 └─────────────────────────────────────────────────┘
 
 ❌ Problem: To add a feature, you touch multiple layers!
@@ -204,13 +204,13 @@ VSA-Demo/
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              gateway-api.jar (Single JVM)                    │
-│                                                              │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────┐ │
-│  │Customer │ │  Auth   │ │Process  │ │Settle   │ │Orch  │ │
-│  │ Slice  │ │  Slice  │ │ Slice   │ │ Slice   │ │Slice │ │
-│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └──────┘ │
-│                                                              │
+│              gateway-api.jar (Single JVM)                   │
+│                                                             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────┐   │
+│  │Customer │ │  Auth   │ │Process  │ │Settle   │ │Orch  │   │
+│  │ Slice   │ │  Slice  │ │ Slice   │ │ Slice   │ │Slice │   │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └──────┘   │
+│                                                             │
 │  ← In-Memory Event Bus (Axon Framework) →                   │
 └─────────────────────────────────────────────────────────────┘
 
