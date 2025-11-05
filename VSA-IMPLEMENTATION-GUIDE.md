@@ -1,13 +1,19 @@
 # Vertical Slice Architecture (VSA) Implementation Guide
 
+**Last Updated**: November 5, 2025  
+**Project Status**: Production-Ready Microservices Deployment
+
 ## 📚 Table of Contents
 1. [What is Vertical Slice Architecture?](#what-is-vertical-slice-architecture)
 2. [Why VSA Over Traditional Layered Architecture?](#why-vsa-over-traditional-layered-architecture)
 3. [VSA in This Project](#vsa-in-this-project)
 4. [Service-by-Service Deep Dive](#service-by-service-deep-dive)
-5. [How VSA Helps Teams](#how-vsa-helps-teams)
-6. [Implementation Best Practices](#implementation-best-practices)
-7. [Common Pitfalls and Solutions](#common-pitfalls-and-solutions)
+5. [Event-Driven Architecture with Kafka](#event-driven-architecture-with-kafka)
+6. [Microservices Deployment](#microservices-deployment)
+7. [How VSA Helps Teams](#how-vsa-helps-teams)
+8. [Implementation Best Practices](#implementation-best-practices)
+9. [Common Pitfalls and Solutions](#common-pitfalls-and-solutions)
+10. [Testing and Verification](#testing-and-verification)
 
 ---
 
@@ -189,59 +195,488 @@ settlement-service: 1 instance      # Low settlement traffic (batch processing)
 
 ### Project Structure Overview
 
+**Current State: Production Microservices Deployment**
+
 ```
 VSA-Demo/
-├── payment-gateway-common/          # Shared value objects, DTOs (minimal)
-├── customer-service/                # 🟦 Customer Slice (complete feature)
-├── authorization-service/           # 🟩 Authorization Slice (complete feature)
-├── processing-service/              # 🟨 Processing Slice (complete feature)
-├── settlement-service/              # 🟧 Settlement Slice (complete feature)
-├── orchestration-service/           # 🟪 Orchestration Slice (saga coordination)
-└── gateway-api/                     # 🔵 Monolith assembly (Spring Boot app)
+├── payment-gateway-common/          # Shared value objects, base classes
+├── payment-gateway-customer/        # 🟦 Customer Service (Port 8081)
+├── payment-gateway-authorization/   # 🟩 Authorization Service (Port 8082)
+├── payment-gateway-processing/      # 🟨 Processing Service (Port 8083)
+├── payment-gateway-settlement/      # 🟧 Settlement Service (Port 8084)
+├── docker-compose.yml               # � Complete microservices stack
+└── kubernetes/                      # ☸️ Kubernetes deployment manifests
 ```
 
-### Current Deployment: Modular Monolith
+### Current Deployment: Microservices with Event-Driven Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│              gateway-api.jar (Single JVM)                   │
-│                                                             │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────┐   │
-│  │Customer │ │  Auth   │ │Process  │ │Settle   │ │Orch  │   │
-│  │ Slice   │ │  Slice  │ │ Slice   │ │ Slice   │ │Slice │   │
-│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └──────┘   │
-│                                                             │
-│  ← In-Memory Event Bus (Axon Framework) →                   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Production Microservices Stack                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────┐  ┌────────────────┐  ┌───────────────┐  ┌───────────────┐
+│   Customer    │  │ Authorization  │  │  Processing   │  │  Settlement   │
+│   Service     │  │    Service     │  │    Service    │  │    Service    │
+│   :8081       │  │     :8082      │  │     :8083     │  │     :8084     │
+│               │  │                │  │               │  │               │
+│ ┌───────────┐ │  │  ┌───────────┐ │  │ ┌───────────┐ │  │ ┌───────────┐ │
+│ │Aggregate  │ │  │  │Aggregate  │ │  │ │Aggregate  │ │  │ │Aggregate  │ │
+│ │Commands   │ │  │  │Commands   │ │  │ │Commands   │ │  │ │Commands   │ │
+│ │Events     │ │  │  │Events     │ │  │ │Events     │ │  │ │Events     │ │
+│ │Projections│ │  │  │Projections│ │  │ │Projections│ │  │ │Projections│ │
+│ │ReadModel  │ │  │  │ReadModel  │ │  │ │ReadModel  │ │  │ │ReadModel  │ │
+│ │API        │ │  │  │API        │ │  │ │Kafka      │ │  │ │Kafka      │ │
+│ └───────────┘ │  │  └───────────┘ │  │ │Consumer   │ │  │ │Consumer   │ │
+└───────┬───────┘  └────────┬───────┘  │ └───────────┘ │  │ └───────────┘ │
+        │                   │          └───────┬───────┘  └───────┬───────┘
+        │                   │                  │                  │
+        │  EventToKafka     │  EventToKafka    │  EventToKafka    │  EventToKafka
+        │  Forwarder        │  Forwarder       │  Forwarder       │  Forwarder
+        │                   │                  │                  │
+        └───────────────────┴──────────────────┴──────────────────┘
+                            │
+                    ┌───────▼────────┐
+                    │  Apache Kafka  │
+                    │    :9092       │
+                    │                │
+                    │ payment-events │ ← Single topic for all domain events
+                    │   topic        │
+                    └────────┬───────┘
+                             │
+                    ┌────────▼────────┐
+                    │   Zookeeper     │
+                    │     :2181       │
+                    └─────────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │  PostgreSQL     │
+                    │     :5433       │
+                    │                 │
+                    │ • Event Store   │ ← domain_event_entry (Axon)
+                    │ • Read Models   │ ← customer_read_model, etc.
+                    └─────────────────┘
+
+Event Flow:
+1. Service handles command → generates event → persists to event store
+2. EventToKafkaForwarder (@EventHandler) publishes event to Kafka
+3. Other services consume events from Kafka → trigger commands
+4. Complete event-driven saga orchestration (choreography pattern)
 
 Benefits:
-✅ Simple deployment (one JAR)
-✅ No network latency between slices
-✅ Easy development and debugging
-✅ Ready to split into microservices when needed
+✅ Independent scaling per service (horizontal)
+✅ Independent deployment (no downtime for other services)
+✅ Event-driven communication (loose coupling via Kafka)
+✅ Fault isolation (one service failure doesn't cascade)
+✅ Complete audit trail (event sourcing in PostgreSQL)
+✅ Technology flexibility per service
+✅ Team ownership per service
+✅ Production-ready with health checks and monitoring
 ```
 
-### Future: Microservices Deployment
+---
+
+## Event-Driven Architecture with Kafka
+
+### EventToKafkaForwarder Implementation
+
+Each service contains an `EventToKafkaForwarder` component that bridges Axon events to Kafka:
+
+```java
+@Component
+public class EventToKafkaForwarder {
+    
+    private static final Logger logger = LoggerFactory.getLogger(EventToKafkaForwarder.class);
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+    
+    public EventToKafkaForwarder(KafkaTemplate<String, Object> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+    
+    // ⭐ Listen to ALL domain events from this service
+    @EventHandler
+    public void on(Object event) {
+        try {
+            String topic = "payment-events";  // Single topic for all events
+            String eventType = event.getClass().getSimpleName();
+            
+            logger.info("📤 Publishing {} to Kafka topic: {}", eventType, topic);
+            
+            kafkaTemplate.send(topic, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        logger.info("✅ Successfully published {} to Kafka", eventType);
+                    } else {
+                        logger.error("❌ Failed to publish {} to Kafka", eventType, ex);
+                    }
+                });
+        } catch (Exception e) {
+            logger.error("❌ Error forwarding event to Kafka", e);
+        }
+    }
+}
+```
+
+**How It Works**:
+1. **@EventHandler** on generic `Object` → catches ALL events in this service
+2. **Event Store First** → Axon persists to PostgreSQL, then EventToKafkaForwarder runs
+3. **Fire and Forget** → Non-blocking publish to Kafka (async)
+4. **Guaranteed Ordering** → Kafka partitions ensure order per customer/payment
+5. **Retry on Failure** → Kafka producer retries automatically
+
+### Kafka Configuration
+
+```yaml
+# application.yml (all services)
+spring:
+  kafka:
+    bootstrap-servers: kafka:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all  # Wait for all replicas (durability)
+      retries: 3
+    consumer:
+      group-id: ${spring.application.name}-group
+      auto-offset-reset: earliest  # Read from beginning on first start
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.vsa.paymentgateway.*"
+```
+
+### Kafka Consumers in Processing and Settlement Services
+
+**Processing Service Kafka Consumer**:
+```java
+@Service
+public class ProcessingKafkaConsumer {
+    
+    private final CommandGateway commandGateway;
+    
+    @KafkaListener(topics = "payment-events", groupId = "processing-service-group")
+    public void handleEvent(ConsumerRecord<String, Object> record) {
+        Object event = record.value();
+        
+        if (event instanceof PaymentAuthorizedEvent) {
+            PaymentAuthorizedEvent authorizedEvent = (PaymentAuthorizedEvent) event;
+            
+            // ⭐ Trigger processing workflow
+            commandGateway.send(new ProcessPaymentCommand(
+                authorizedEvent.getPaymentId(),
+                authorizedEvent.getAuthorizationId(),
+                authorizedEvent.getAmount(),
+                Instant.now()
+            ));
+        }
+    }
+}
+```
+
+**Settlement Service Kafka Consumer**:
+```java
+@Service
+public class SettlementKafkaConsumer {
+    
+    private final CommandGateway commandGateway;
+    
+    @KafkaListener(topics = "payment-events", groupId = "settlement-service-group")
+    public void handleEvent(ConsumerRecord<String, Object> record) {
+        Object event = record.value();
+        
+        if (event instanceof PaymentProcessedEvent) {
+            PaymentProcessedEvent processedEvent = (PaymentProcessedEvent) event;
+            
+            // ⭐ Trigger settlement workflow
+            commandGateway.send(new SettlePaymentCommand(
+                processedEvent.getPaymentId(),
+                processedEvent.getProcessingId(),
+                processedEvent.getAmount(),
+                Instant.now()
+            ));
+        }
+    }
+}
+```
+
+### Event Flow Diagram
 
 ```
-┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐
-│ Customer  │   │   Auth    │   │ Processing│   │Settlement │
-│ Service   │   │  Service  │   │  Service  │   │  Service  │
-│ :8081     │   │  :8082    │   │   :8083   │   │  :8084    │
-└─────┬─────┘   └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
-      │               │               │               │
-      └───────────────┴───────────────┴───────────────┘
-                      │
-              ┌───────▼────────┐
-              │  Kafka Event   │
-              │      Bus       │
-              └────────────────┘
+┌─────────────────┐
+│ Customer Service│
+│   (Port 8081)   │
+└────────┬────────┘
+         │ RegisterCustomerCommand
+         ▼
+    [CustomerAggregate]
+         │
+         ├── Persist to Event Store (PostgreSQL)
+         │   ↓ domain_event_entry table
+         │
+         └── CustomerRegisteredEvent
+             ↓
+    [EventToKafkaForwarder]
+         │
+         ▼
+    ┌─────────────┐
+    │ Kafka Topic │
+    │payment-events│
+    └─────────────┘
+         │
+         └──→ [Other Services Subscribe]
+              (if they care about customer events)
 
-Benefits:
-✅ Independent scaling per slice
-✅ Independent deployment per slice
-✅ Technology flexibility per slice
-✅ Team ownership per slice
+┌──────────────────┐
+│Authorization Svc │
+│   (Port 8082)    │
+└────────┬─────────┘
+         │ AuthorizePaymentCommand
+         ▼
+    [AuthorizationAggregate]
+         │
+         ├── Persist to Event Store
+         └── PaymentAuthorizedEvent
+             ↓
+    [EventToKafkaForwarder]
+         │
+         ▼
+    ┌─────────────┐
+    │ Kafka Topic │ 
+    └──────┬──────┘
+           │
+           ▼
+    ┌─────────────────┐
+    │Processing Kafka │
+    │   Consumer      │
+    └────────┬────────┘
+             │
+             ▼ ProcessPaymentCommand
+    [ProcessingAggregate]
+         │
+         ├── Persist to Event Store
+         └── PaymentProcessedEvent
+             ↓
+    [EventToKafkaForwarder]
+         │
+         ▼
+    ┌─────────────┐
+    │ Kafka Topic │
+    └──────┬──────┘
+           │
+           ▼
+    ┌─────────────────┐
+    │Settlement Kafka │
+    │   Consumer      │
+    └────────┬────────┘
+             │
+             ▼ SettlePaymentCommand
+    [SettlementAggregate]
+         │
+         ├── Persist to Event Store
+         └── PaymentSettledEvent
+             ↓
+    [EventToKafkaForwarder]
+         │
+         ▼
+    (Saga Complete ✅)
+```
+
+### Benefits of Event-Driven Architecture
+
+| Benefit | Description | Example |
+|---------|-------------|---------|
+| **Loose Coupling** | Services don't know about each other | Processing service doesn't call Settlement API directly |
+| **Scalability** | Scale event consumers independently | Add more Settlement service instances for high volume |
+| **Fault Tolerance** | Consumer failures don't affect producers | If Settlement is down, events queue in Kafka |
+| **Audit Trail** | Complete event history in Kafka + PostgreSQL | Replay events to debug issues or rebuild state |
+| **Real-time Processing** | Sub-second event propagation | Payment authorized → processed → settled in ~500ms |
+| **Saga Orchestration** | Choreography pattern via events | No central orchestrator needed |
+
+---
+
+## Microservices Deployment
+
+### Docker Compose Stack
+
+The complete production stack is defined in `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Infrastructure Services
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: payment_gateway
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Microservices (Each with complete vertical slice)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  customer-service:
+    build:
+      context: ./payment-gateway-customer
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  authorization-service:
+    build:
+      context: ./payment-gateway-authorization
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+  processing-service:
+    build:
+      context: ./payment-gateway-processing
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+  settlement-service:
+    build:
+      context: ./payment-gateway-settlement
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+volumes:
+  postgres_data:
+```
+
+### Starting the Stack
+
+```bash
+# Build and start all services
+docker-compose up --build
+
+# Start in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f customer-service
+docker-compose logs -f kafka
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (clean state)
+docker-compose down -v
+```
+
+### Health Checks
+
+Each service exposes health endpoints via Spring Boot Actuator:
+
+```bash
+# Customer Service health
+curl http://localhost:8081/actuator/health
+
+# Authorization Service health
+curl http://localhost:8082/actuator/health
+
+# Processing Service health
+curl http://localhost:8083/actuator/health
+
+# Settlement Service health
+curl http://localhost:8084/actuator/health
+```
+
+**Response**:
+```json
+{
+  "status": "UP",
+  "components": {
+    "db": {
+      "status": "UP",
+      "details": {
+        "database": "PostgreSQL",
+        "validationQuery": "isValid()"
+      }
+    },
+    "kafka": {
+      "status": "UP",
+      "details": {
+        "clusterId": "kafka-cluster-1"
+      }
+    }
+  }
+}
 ```
 
 ---
@@ -615,7 +1050,15 @@ public class AuthorizationController {
 
 ### 🟨 Service 3: Processing Service
 
-**Business Capability**: Payment processing with external processor integration
+**Business Capability**: Payment processing with external processor integration and Kafka event consumption
+
+**Key Features**:
+- ✅ Consumes `PaymentAuthorizedEvent` from Kafka
+- ✅ Triggers processing workflow automatically (event-driven)
+- ✅ Fraud detection (checks against blacklist, velocity limits)
+- ✅ External payment processor simulation (Stripe, Adyen, etc.)
+- ✅ Automatic retries with exponential backoff
+- ✅ Compensation support (refunds)
 
 **Folder Structure**:
 ```
@@ -630,16 +1073,235 @@ processing-service/
 │   │   ├── PaymentProcessedEvent.java            📢 Success event
 │   │   ├── PaymentProcessingFailedEvent.java     📢 Failure event
 │   │   └── PaymentRefundedEvent.java             📢 Refund event
+│   ├── kafka/
+│   │   ├── ProcessingKafkaConsumer.java          🔄 Event consumer
+│   │   └── EventToKafkaForwarder.java            📤 Event publisher
+│   ├── service/
+│   │   ├── FraudDetectionService.java            🛡️ Fraud checks
+│   │   └── ExternalProcessorService.java         💳 Processor API
 │   ├── queries/
 │   │   ├── ProcessingProjection.java             📊 Read model builder
 │   │   ├── ProcessingReadModel.java              💾 Query model
 │   │   └── ProcessingRepository.java             🗄️ JPA repo
+│   ├── api/
+│   │   └── ProcessingController.java             🌐 REST endpoints
 │   └── domain/
 │       └── ProcessingStatus.java                 🎯 Domain enum
 └── pom.xml
 ```
 
-#### Simulated External Processor Integration
+#### Kafka Event Consumer (Event-Driven Trigger)
+
+```java
+// processing-service/kafka/ProcessingKafkaConsumer.java
+
+@Service
+public class ProcessingKafkaConsumer {
+    
+    private static final Logger logger = LoggerFactory.getLogger(ProcessingKafkaConsumer.class);
+    private final CommandGateway commandGateway;
+    private final FraudDetectionService fraudDetectionService;
+    
+    public ProcessingKafkaConsumer(CommandGateway commandGateway, 
+                                   FraudDetectionService fraudDetectionService) {
+        this.commandGateway = commandGateway;
+        this.fraudDetectionService = fraudDetectionService;
+    }
+    
+    /**
+     * 🔄 Listen to Kafka for PaymentAuthorizedEvent
+     * This is the ENTRY POINT for processing workflow
+     */
+    @KafkaListener(topics = "payment-events", groupId = "processing-service-group")
+    public void handleEvent(ConsumerRecord<String, Object> record) {
+        Object event = record.value();
+        
+        if (event instanceof PaymentAuthorizedEvent) {
+            PaymentAuthorizedEvent authorizedEvent = (PaymentAuthorizedEvent) event;
+            
+            logger.info("📥 Received PaymentAuthorizedEvent from Kafka: {}", 
+                       authorizedEvent.getAuthorizationId());
+            
+            // ⭐ Fraud detection BEFORE processing
+            boolean isSuspicious = fraudDetectionService.checkFraud(
+                authorizedEvent.getCustomerId(),
+                authorizedEvent.getAmount(),
+                authorizedEvent.getMerchantId()
+            );
+            
+            if (isSuspicious) {
+                logger.warn("🚨 Suspicious activity detected - blocking payment");
+                // Could emit PaymentBlockedEvent here
+                return;
+            }
+            
+            // ⭐ Trigger processing command
+            String processingId = UUID.randomUUID().toString();
+            ProcessPaymentCommand command = new ProcessPaymentCommand(
+                processingId,
+                authorizedEvent.getAuthorizationId(),
+                authorizedEvent.getCustomerId(),
+                authorizedEvent.getAmount(),
+                authorizedEvent.getMerchantId(),
+                Instant.now()
+            );
+            
+            // Send to aggregate via command gateway
+            commandGateway.send(command)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        logger.info("✅ ProcessPaymentCommand sent successfully: {}", processingId);
+                    } else {
+                        logger.error("❌ Failed to send ProcessPaymentCommand", ex);
+                    }
+                });
+        }
+    }
+}
+```
+
+#### Fraud Detection Service
+
+```java
+// processing-service/service/FraudDetectionService.java
+
+@Service
+public class FraudDetectionService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(FraudDetectionService.class);
+    
+    // In production: This would be a database/cache lookup
+    private static final Set<String> BLACKLISTED_CUSTOMERS = Set.of(
+        "cust-fraud-001", "cust-fraud-002"
+    );
+    
+    // In production: Redis cache for velocity tracking
+    private final Map<String, List<Instant>> velocityTracker = new ConcurrentHashMap<>();
+    
+    /**
+     * Multi-layered fraud detection
+     */
+    public boolean checkFraud(String customerId, Money amount, String merchantId) {
+        
+        // Rule 1: Blacklist check
+        if (BLACKLISTED_CUSTOMERS.contains(customerId)) {
+            logger.warn("🚨 Blacklisted customer detected: {}", customerId);
+            return true;
+        }
+        
+        // Rule 2: Amount threshold (>$10,000)
+        if (amount.getAmount().compareTo(new BigDecimal("10000")) > 0) {
+            logger.warn("🚨 High-value transaction detected: ${}", amount.getAmount());
+            return true;
+        }
+        
+        // Rule 3: Velocity check (>5 transactions in last 5 minutes)
+        velocityTracker.putIfAbsent(customerId, new ArrayList<>());
+        List<Instant> recentTransactions = velocityTracker.get(customerId);
+        
+        // Clean old transactions
+        Instant fiveMinutesAgo = Instant.now().minus(5, ChronoUnit.MINUTES);
+        recentTransactions.removeIf(timestamp -> timestamp.isBefore(fiveMinutesAgo));
+        
+        if (recentTransactions.size() >= 5) {
+            logger.warn("🚨 Velocity limit exceeded: {} transactions in 5 min", 
+                       recentTransactions.size());
+            return true;
+        }
+        
+        // Add current transaction
+        recentTransactions.add(Instant.now());
+        
+        logger.info("✅ Fraud check passed for customer: {}", customerId);
+        return false;
+    }
+}
+```
+
+#### External Payment Processor Service
+
+```java
+// processing-service/service/ExternalProcessorService.java
+
+@Service
+public class ExternalProcessorService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(ExternalProcessorService.class);
+    
+    /**
+     * Simulates calling external payment processor API
+     * In production, this would be:
+     * - Stripe: POST https://api.stripe.com/v1/charges
+     * - Adyen: POST https://checkout-test.adyen.com/v70/payments
+     * - PayPal: POST https://api.paypal.com/v2/payments/captures
+     */
+    public ProcessorResponse processPayment(String authorizationId, 
+                                           Money amount, 
+                                           String merchantId) {
+        
+        logger.info("📞 Calling external processor for auth: {}", authorizationId);
+        
+        // Simulate network latency (100-500ms)
+        try {
+            Thread.sleep(100 + new Random().nextInt(400));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        // Simulate 90% success rate (10% failures for demo)
+        boolean success = Math.random() < 0.90;
+        
+        if (success) {
+            String transactionId = "TXN-" + UUID.randomUUID().toString();
+            logger.info("✅ External processor success: {}", transactionId);
+            
+            return new ProcessorResponse(
+                true, 
+                transactionId, 
+                "Payment processed successfully",
+                Instant.now()
+            );
+        } else {
+            logger.error("❌ External processor failed: Insufficient funds");
+            
+            return new ProcessorResponse(
+                false, 
+                null, 
+                "Insufficient funds",
+                Instant.now()
+            );
+        }
+    }
+    
+    /**
+     * Simulates refund API call
+     */
+    public ProcessorResponse refundPayment(String transactionId, Money amount) {
+        logger.info("📞 Calling external processor refund for: {}", transactionId);
+        
+        // Simulate refund (always succeeds in demo)
+        String refundId = "REF-" + UUID.randomUUID().toString();
+        
+        return new ProcessorResponse(
+            true,
+            refundId,
+            "Refund processed successfully",
+            Instant.now()
+        );
+    }
+}
+
+@Data
+@AllArgsConstructor
+class ProcessorResponse {
+    private boolean success;
+    private String transactionId;
+    private String message;
+    private Instant timestamp;
+}
+```
+
+#### Payment Processing Aggregate with External Integration
 
 ```java
 // processing-service/aggregates/PaymentProcessingAggregate.java
@@ -655,21 +1317,25 @@ public class PaymentProcessingAggregate {
     private String transactionId;
     
     @CommandHandler
-    public PaymentProcessingAggregate(ProcessPaymentCommand command) {
-        // ✅ Simulate external payment processor (Stripe, Adyen, PayPal, etc.)
-        boolean processingSuccess = simulateExternalProcessor(command);
+    public PaymentProcessingAggregate(ProcessPaymentCommand command,
+                                     ExternalProcessorService processorService) {
         
-        if (processingSuccess) {
-            // Generate transaction ID from external processor
-            String transactionId = "TXN-" + UUID.randomUUID().toString();
-            
+        // ⭐ Call external payment processor (Stripe, Adyen, PayPal, etc.)
+        ProcessorResponse response = processorService.processPayment(
+            command.getAuthorizationId(),
+            command.getAmount(),
+            command.getMerchantId()
+        );
+        
+        if (response.isSuccess()) {
+            // Processing succeeded - emit success event
             AggregateLifecycle.apply(new PaymentProcessedEvent(
                 command.getProcessingId(),
                 command.getAuthorizationId(),
                 command.getCustomerId(),
                 command.getAmount(),
                 command.getMerchantId(),
-                transactionId,
+                response.getTransactionId(),  // From external processor
                 Instant.now()
             ));
         } else {
@@ -677,45 +1343,37 @@ public class PaymentProcessingAggregate {
             AggregateLifecycle.apply(new PaymentProcessingFailedEvent(
                 command.getProcessingId(),
                 command.getAuthorizationId(),
-                "External processor returned error: Insufficient funds" // Simulated error
+                response.getMessage()  // Error from processor
             ));
         }
     }
     
-    /**
-     * Simulates calling external payment processor API
-     * In production, this would be:
-     * - Stripe API call
-     * - Adyen API call
-     * - PayPal API call
-     * - etc.
-     */
-    private boolean simulateExternalProcessor(ProcessPaymentCommand command) {
-        // Simulate network delay
-        try {
-            Thread.sleep(100 + new Random().nextInt(400)); // 100-500ms
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        
-        // Simulate 90% success rate (10% failures for demo purposes)
-        return Math.random() < 0.90;
-    }
-    
     // ✅ Compensation: Refund payment if settlement fails
     @CommandHandler
-    public void handle(RefundPaymentCommand command) {
+    public void handle(RefundPaymentCommand command,
+                      ExternalProcessorService processorService) {
+        
         if (this.status == ProcessingStatus.REFUNDED) {
             throw new IllegalStateException("Payment already refunded");
         }
         
-        // In production: Call external processor refund API
-        AggregateLifecycle.apply(new PaymentRefundedEvent(
-            this.processingId,
-            this.authorizationId,
-            command.getReason(),
-            Instant.now()
-        ));
+        // Call external processor refund API
+        ProcessorResponse refundResponse = processorService.refundPayment(
+            this.transactionId,
+            this.amount
+        );
+        
+        if (refundResponse.isSuccess()) {
+            AggregateLifecycle.apply(new PaymentRefundedEvent(
+                this.processingId,
+                this.authorizationId,
+                command.getReason(),
+                refundResponse.getTransactionId(),
+                Instant.now()
+            ));
+        } else {
+            throw new IllegalStateException("Refund failed: " + refundResponse.getMessage());
+        }
     }
     
     @EventSourcingHandler
@@ -793,7 +1451,16 @@ public class ProcessingProjection {
 
 ### 🟧 Service 4: Settlement Service
 
-**Business Capability**: Payment settlement and merchant payouts
+**Business Capability**: Payment settlement, merchant payouts, and fee calculation
+
+**Key Features**:
+- ✅ Consumes `PaymentProcessedEvent` from Kafka
+- ✅ Automatic settlement triggering (event-driven)
+- ✅ Fee calculation (2.9% + $0.30 standard rate)
+- ✅ Batch processing (daily batches per merchant)
+- ✅ T+1 settlement schedule (next business day)
+- ✅ Bank account validation
+- ✅ Settlement reporting
 
 **Folder Structure**:
 ```
@@ -806,16 +1473,309 @@ settlement-service/
 │   ├── events/
 │   │   ├── PaymentSettledEvent.java              📢 Success event
 │   │   └── SettlementFailedEvent.java            📢 Failure event
+│   ├── kafka/
+│   │   ├── SettlementKafkaConsumer.java          🔄 Event consumer
+│   │   └── EventToKafkaForwarder.java            📤 Event publisher
+│   ├── service/
+│   │   ├── FeeCalculationService.java            💰 Fee calculator
+│   │   ├── BatchProcessingService.java           📦 Batch handler
+│   │   └── BankingService.java                   🏦 Bank API
 │   ├── queries/
 │   │   ├── SettlementProjection.java             📊 Read model
 │   │   ├── SettlementReadModel.java              💾 Query model
 │   │   └── SettlementRepository.java             🗄️ JPA repo
+│   ├── api/
+│   │   └── SettlementController.java             🌐 REST endpoints
 │   └── domain/
-│       └── SettlementBatch.java                  📦 Batch processing
+│       ├── SettlementBatch.java                  📦 Batch domain
+│       └── FeeStructure.java                     💵 Fee rules
 └── pom.xml
 ```
 
-#### Batch Settlement Processing
+#### Kafka Event Consumer (Event-Driven Trigger)
+
+```java
+// settlement-service/kafka/SettlementKafkaConsumer.java
+
+@Service
+public class SettlementKafkaConsumer {
+    
+    private static final Logger logger = LoggerFactory.getLogger(SettlementKafkaConsumer.class);
+    private final CommandGateway commandGateway;
+    private final FeeCalculationService feeCalculationService;
+    
+    public SettlementKafkaConsumer(CommandGateway commandGateway,
+                                   FeeCalculationService feeCalculationService) {
+        this.commandGateway = commandGateway;
+        this.feeCalculationService = feeCalculationService;
+    }
+    
+    /**
+     * 🔄 Listen to Kafka for PaymentProcessedEvent
+     * This is the ENTRY POINT for settlement workflow
+     */
+    @KafkaListener(topics = "payment-events", groupId = "settlement-service-group")
+    public void handleEvent(ConsumerRecord<String, Object> record) {
+        Object event = record.value();
+        
+        if (event instanceof PaymentProcessedEvent) {
+            PaymentProcessedEvent processedEvent = (PaymentProcessedEvent) event;
+            
+            logger.info("📥 Received PaymentProcessedEvent from Kafka: {}", 
+                       processedEvent.getProcessingId());
+            
+            // ⭐ Calculate fees
+            FeeCalculation fees = feeCalculationService.calculateFees(
+                processedEvent.getAmount(),
+                processedEvent.getMerchantId()
+            );
+            
+            logger.info("💰 Calculated fees: Platform=${}, Net to merchant=${}", 
+                       fees.getPlatformFee(), fees.getMerchantPayout());
+            
+            // ⭐ Trigger settlement command
+            String settlementId = UUID.randomUUID().toString();
+            SettlePaymentCommand command = new SettlePaymentCommand(
+                settlementId,
+                processedEvent.getProcessingId(),
+                processedEvent.getAuthorizationId(),
+                processedEvent.getAmount(),
+                processedEvent.getMerchantId(),
+                fees.getPlatformFee(),
+                fees.getMerchantPayout(),
+                Instant.now()
+            );
+            
+            // Send to aggregate via command gateway
+            commandGateway.send(command)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        logger.info("✅ SettlePaymentCommand sent successfully: {}", settlementId);
+                    } else {
+                        logger.error("❌ Failed to send SettlePaymentCommand", ex);
+                    }
+                });
+        }
+    }
+}
+```
+
+#### Fee Calculation Service
+
+```java
+// settlement-service/service/FeeCalculationService.java
+
+@Service
+public class FeeCalculationService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(FeeCalculationService.class);
+    
+    // Standard payment processing fees (Stripe-like model)
+    private static final BigDecimal PERCENTAGE_FEE = new BigDecimal("0.029");  // 2.9%
+    private static final BigDecimal FIXED_FEE = new BigDecimal("0.30");        // $0.30
+    
+    // In production: Fee structures would be in database per merchant
+    private static final Map<String, FeeStructure> MERCHANT_FEE_STRUCTURES = Map.of(
+        "merchant-premium-001", new FeeStructure(new BigDecimal("0.025"), new BigDecimal("0.25")),  // Premium: 2.5% + $0.25
+        "merchant-enterprise-001", new FeeStructure(new BigDecimal("0.020"), new BigDecimal("0.20")) // Enterprise: 2.0% + $0.20
+    );
+    
+    /**
+     * Calculate platform fees and merchant payout
+     */
+    public FeeCalculation calculateFees(Money grossAmount, String merchantId) {
+        
+        // Get merchant-specific fee structure or use default
+        FeeStructure feeStructure = MERCHANT_FEE_STRUCTURES.getOrDefault(
+            merchantId, 
+            new FeeStructure(PERCENTAGE_FEE, FIXED_FEE)
+        );
+        
+        BigDecimal amount = grossAmount.getAmount();
+        
+        // Calculate fees: (amount * percentage) + fixed_fee
+        BigDecimal percentageFee = amount.multiply(feeStructure.getPercentageFee())
+            .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalFee = percentageFee.add(feeStructure.getFixedFee());
+        
+        // Calculate net payout to merchant
+        BigDecimal merchantPayout = amount.subtract(totalFee);
+        
+        logger.info("📊 Fee calculation: Gross=${}, Fee=${} ({}% + ${}), Net=${}",
+                   amount, totalFee, 
+                   feeStructure.getPercentageFee().multiply(new BigDecimal("100")),
+                   feeStructure.getFixedFee(),
+                   merchantPayout);
+        
+        return new FeeCalculation(
+            new Money(amount, grossAmount.getCurrency()),
+            new Money(totalFee, grossAmount.getCurrency()),
+            new Money(merchantPayout, grossAmount.getCurrency())
+        );
+    }
+}
+
+@Data
+@AllArgsConstructor
+class FeeCalculation {
+    private Money grossAmount;
+    private Money platformFee;
+    private Money merchantPayout;
+}
+
+@Data
+@AllArgsConstructor
+class FeeStructure {
+    private BigDecimal percentageFee;  // e.g., 0.029 = 2.9%
+    private BigDecimal fixedFee;       // e.g., 0.30 = $0.30
+}
+```
+
+#### Batch Processing Service
+
+```java
+// settlement-service/service/BatchProcessingService.java
+
+@Service
+public class BatchProcessingService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(BatchProcessingService.class);
+    
+    /**
+     * Generate batch ID for daily settlement
+     * Format: BATCH-{merchantId}-{YYYY-MM-DD}
+     */
+    public String generateBatchId(String merchantId) {
+        LocalDate today = LocalDate.now();
+        String batchId = String.format("BATCH-%s-%s", merchantId, today.toString());
+        
+        logger.info("📦 Generated batch ID: {}", batchId);
+        return batchId;
+    }
+    
+    /**
+     * Calculate settlement date (T+1: next business day)
+     */
+    public LocalDate calculateSettlementDate() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        
+        // Skip weekends (simplified - doesn't handle holidays)
+        while (tomorrow.getDayOfWeek() == DayOfWeek.SATURDAY || 
+               tomorrow.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            tomorrow = tomorrow.plusDays(1);
+        }
+        
+        logger.info("📅 Settlement date: {} (T+1)", tomorrow);
+        return tomorrow;
+    }
+    
+    /**
+     * In production: This would aggregate all payments in a batch
+     * and create a single payout to merchant's bank account
+     */
+    public SettlementBatch aggregateBatch(String batchId, List<SettlementReadModel> settlements) {
+        BigDecimal totalGross = settlements.stream()
+            .map(SettlementReadModel::getGrossAmount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        
+        BigDecimal totalFees = settlements.stream()
+            .map(SettlementReadModel::getPlatformFee)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        
+        BigDecimal totalPayout = settlements.stream()
+            .map(SettlementReadModel::getMerchantPayout)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        
+        logger.info("📊 Batch {} summary: {} payments, Gross=${}, Fees=${}, Net=${}",
+                   batchId, settlements.size(), totalGross, totalFees, totalPayout);
+        
+        return new SettlementBatch(batchId, settlements.size(), totalGross, totalFees, totalPayout);
+    }
+}
+```
+
+#### Banking Service (External Integration)
+
+```java
+// settlement-service/service/BankingService.java
+
+@Service
+public class BankingService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(BankingService.class);
+    
+    /**
+     * Simulates transferring funds to merchant's bank account
+     * In production, this would integrate with:
+     * - Stripe Connect (for US)
+     * - Plaid (for bank verification)
+     * - ACH/Wire transfer APIs
+     * - International: SWIFT, SEPA, etc.
+     */
+    public BankTransferResponse transferToMerchant(String merchantId, 
+                                                   Money amount, 
+                                                   String batchId) {
+        
+        logger.info("🏦 Initiating bank transfer: Merchant={}, Amount=${}, Batch={}",
+                   merchantId, amount.getAmount(), batchId);
+        
+        // Simulate bank validation
+        boolean accountValid = validateMerchantBankAccount(merchantId);
+        if (!accountValid) {
+            logger.error("❌ Invalid merchant bank account: {}", merchantId);
+            return new BankTransferResponse(false, null, "Invalid bank account");
+        }
+        
+        // Simulate transfer processing (200-800ms)
+        try {
+            Thread.sleep(200 + new Random().nextInt(600));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        // Simulate 95% success rate (5% failures for demo)
+        boolean success = Math.random() < 0.95;
+        
+        if (success) {
+            String transferId = "XFER-" + UUID.randomUUID().toString();
+            logger.info("✅ Bank transfer successful: {}", transferId);
+            
+            return new BankTransferResponse(
+                true,
+                transferId,
+                "Transfer initiated successfully"
+            );
+        } else {
+            logger.error("❌ Bank transfer failed: Insufficient funds in platform account");
+            return new BankTransferResponse(
+                false,
+                null,
+                "Insufficient funds in platform account"
+            );
+        }
+    }
+    
+    /**
+     * Validate merchant bank account
+     * In production: Call bank verification API
+     */
+    private boolean validateMerchantBankAccount(String merchantId) {
+        // Simulate invalid accounts
+        Set<String> invalidAccounts = Set.of("merchant-invalid-001");
+        return !invalidAccounts.contains(merchantId);
+    }
+}
+
+@Data
+@AllArgsConstructor
+class BankTransferResponse {
+    private boolean success;
+    private String transferId;
+    private String message;
+}
+```
+
+#### Settlement Aggregate with Fee Calculation
 
 ```java
 // settlement-service/aggregates/SettlementAggregate.java
@@ -826,70 +1786,248 @@ public class SettlementAggregate {
     @AggregateIdentifier
     private String settlementId;
     private String processingId;
-    private Money amount;
+    private Money grossAmount;
+    private Money platformFee;
+    private Money merchantPayout;
     private String merchantId;
     private String batchId;
+    private LocalDate settlementDate;
     
     @CommandHandler
-    public SettlementAggregate(SettlePaymentCommand command) {
-        // ✅ Business Rule: Settlement happens in batches
-        String batchId = generateBatchId(command.getMerchantId());
+    public SettlementAggregate(SettlePaymentCommand command,
+                              BatchProcessingService batchService,
+                              BankingService bankingService) {
         
-        // ✅ Simulate settlement processing
-        boolean settlementSuccess = simulateSettlement(command);
+        // ⭐ Generate batch ID for daily settlement
+        String batchId = batchService.generateBatchId(command.getMerchantId());
         
-        if (settlementSuccess) {
-            // Calculate settlement date (typically T+1: tomorrow)
-            LocalDate settlementDate = LocalDate.now().plusDays(1);
-            
+        // ⭐ Calculate settlement date (T+1)
+        LocalDate settlementDate = batchService.calculateSettlementDate();
+        
+        // ⭐ Transfer funds to merchant's bank account
+        BankTransferResponse transferResponse = bankingService.transferToMerchant(
+            command.getMerchantId(),
+            command.getMerchantPayout(),
+            batchId
+        );
+        
+        if (transferResponse.isSuccess()) {
+            // Settlement successful
             AggregateLifecycle.apply(new PaymentSettledEvent(
                 command.getSettlementId(),
                 command.getProcessingId(),
                 command.getAuthorizationId(),
-                command.getAmount(),
+                command.getGrossAmount(),
+                command.getPlatformFee(),
+                command.getMerchantPayout(),
                 command.getMerchantId(),
                 batchId,
                 settlementDate,
+                transferResponse.getTransferId(),
                 Instant.now()
             ));
         } else {
+            // Settlement failed
             AggregateLifecycle.apply(new SettlementFailedEvent(
                 command.getSettlementId(),
                 command.getProcessingId(),
                 command.getAuthorizationId(),
-                "Settlement failed: Merchant account issue" // Simulated error
+                transferResponse.getMessage()
             ));
         }
-    }
-    
-    /**
-     * Generate batch ID for settlement
-     * In production: Settlements are grouped into daily batches per merchant
-     */
-    private String generateBatchId(String merchantId) {
-        LocalDate today = LocalDate.now();
-        return String.format("BATCH-%s-%s", merchantId, today.toString());
-    }
-    
-    /**
-     * Simulates settlement to merchant bank account
-     * In production: Integration with banking APIs
-     */
-    private boolean simulateSettlement(SettlePaymentCommand command) {
-        // Simulate settlement delay
-        try {
-            Thread.sleep(50 + new Random().nextInt(150)); // 50-200ms
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        
-        // Simulate 95% success rate (5% failures for demo)
-        return Math.random() < 0.95;
     }
     
     @EventSourcingHandler
     public void on(PaymentSettledEvent event) {
         this.settlementId = event.getSettlementId();
+        this.processingId = event.getProcessingId();
+        this.grossAmount = event.getGrossAmount();
+        this.platformFee = event.getPlatformFee();
+        this.merchantPayout = event.getMerchantPayout();
+        this.merchantId = event.getMerchantId();
+        this.batchId = event.getBatchId();
+        this.settlementDate = event.getSettlementDate();
+    }
+    
+    @EventSourcingHandler
+    public void on(SettlementFailedEvent event) {
+        this.settlementId = event.getSettlementId();
+        this.processingId = event.getProcessingId();
+        // Status = FAILED (tracked in read model)
+    }
+}
+```
+
+#### Settlement Read Model Projection
+
+```java
+// settlement-service/queries/SettlementProjection.java
+
+@Component
+@ProcessingGroup("settlement-projection")
+public class SettlementProjection {
+    
+    private final SettlementRepository settlementRepository;
+    
+    @EventHandler
+    public void on(PaymentSettledEvent event) {
+        SettlementReadModel settlement = new SettlementReadModel();
+        settlement.setSettlementId(event.getSettlementId());
+        settlement.setProcessingId(event.getProcessingId());
+        settlement.setAuthorizationId(event.getAuthorizationId());
+        settlement.setGrossAmount(event.getGrossAmount().getAmount());
+        settlement.setPlatformFee(event.getPlatformFee().getAmount());
+        settlement.setMerchantPayout(event.getMerchantPayout().getAmount());
+        settlement.setCurrency(event.getGrossAmount().getCurrency());
+        settlement.setMerchantId(event.getMerchantId());
+        settlement.setBatchId(event.getBatchId());
+        settlement.setSettlementDate(event.getSettlementDate());
+        settlement.setTransferId(event.getTransferId());
+        settlement.setSettledAt(event.getSettledAt());
+        settlement.setStatus("SETTLED");
+        
+        settlementRepository.save(settlement);
+    }
+    
+    @EventHandler
+    public void on(SettlementFailedEvent event) {
+        SettlementReadModel settlement = new SettlementReadModel();
+        settlement.setSettlementId(event.getSettlementId());
+        settlement.setProcessingId(event.getProcessingId());
+        settlement.setAuthorizationId(event.getAuthorizationId());
+        settlement.setStatus("FAILED");
+        settlement.setFailureReason(event.getReason());
+        
+        settlementRepository.save(settlement);
+    }
+}
+```
+
+#### Settlement API Endpoints
+
+```java
+// settlement-service/api/SettlementController.java
+
+@RestController
+@RequestMapping("/api/settlements")
+public class SettlementController {
+    
+    private final SettlementRepository settlementRepository;
+    private final BatchProcessingService batchService;
+    
+    // Query: Get settlement by ID
+    @GetMapping("/{settlementId}")
+    public ResponseEntity<SettlementReadModel> getSettlement(@PathVariable String settlementId) {
+        return settlementRepository.findById(settlementId)
+            .map(ResponseEntity::ok)
+            .orElse(ResponseEntity.notFound().build());
+    }
+    
+    // Query: Get all settlements for a merchant
+    @GetMapping("/merchant/{merchantId}")
+    public ResponseEntity<List<SettlementReadModel>> getSettlementsByMerchant(
+            @PathVariable String merchantId) {
+        
+        List<SettlementReadModel> settlements = settlementRepository
+            .findByMerchantId(merchantId);
+        
+        return ResponseEntity.ok(settlements);
+    }
+    
+    // Query: Get settlements by batch ID
+    @GetMapping("/batch/{batchId}")
+    public ResponseEntity<BatchSummary> getBatchSummary(@PathVariable String batchId) {
+        List<SettlementReadModel> settlements = settlementRepository
+            .findByBatchId(batchId);
+        
+        if (settlements.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        
+        SettlementBatch batch = batchService.aggregateBatch(batchId, settlements);
+        
+        BatchSummary summary = new BatchSummary(
+            batchId,
+            batch.getPaymentCount(),
+            batch.getTotalGross(),
+            batch.getTotalFees(),
+            batch.getTotalPayout(),
+            settlements.get(0).getSettlementDate()
+        );
+        
+        return ResponseEntity.ok(summary);
+    }
+    
+    // Query: Get daily settlement report
+    @GetMapping("/report/daily")
+    public ResponseEntity<DailySettlementReport> getDailyReport(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        
+        List<SettlementReadModel> settlements = settlementRepository
+            .findBySettlementDate(date);
+        
+        // Aggregate by merchant
+        Map<String, List<SettlementReadModel>> byMerchant = settlements.stream()
+            .collect(Collectors.groupingBy(SettlementReadModel::getMerchantId));
+        
+        List<MerchantSettlementSummary> merchantSummaries = byMerchant.entrySet().stream()
+            .map(entry -> {
+                SettlementBatch batch = batchService.aggregateBatch(
+                    "BATCH-" + entry.getKey() + "-" + date, 
+                    entry.getValue()
+                );
+                
+                return new MerchantSettlementSummary(
+                    entry.getKey(),
+                    batch.getPaymentCount(),
+                    batch.getTotalPayout()
+                );
+            })
+            .collect(Collectors.toList());
+        
+        return ResponseEntity.ok(new DailySettlementReport(date, merchantSummaries));
+    }
+}
+
+@Data
+@AllArgsConstructor
+class BatchSummary {
+    private String batchId;
+    private int paymentCount;
+    private BigDecimal totalGross;
+    private BigDecimal totalFees;
+    private BigDecimal totalPayout;
+    private LocalDate settlementDate;
+}
+
+@Data
+@AllArgsConstructor
+class MerchantSettlementSummary {
+    private String merchantId;
+    private int paymentCount;
+    private BigDecimal totalPayout;
+}
+
+@Data
+@AllArgsConstructor
+class DailySettlementReport {
+    private LocalDate date;
+    private List<MerchantSettlementSummary> merchants;
+}
+```
+
+#### Settlement Benefits
+
+| Feature | Implementation | Business Value |
+|---------|----------------|----------------|
+| **Automated Settlement** | Event-driven via Kafka | No manual intervention needed |
+| **Fee Calculation** | Configurable per merchant | Revenue optimization |
+| **Batch Processing** | Daily batches per merchant | Reduced banking fees |
+| **T+1 Settlement** | Next business day payout | Industry standard |
+| **Audit Trail** | Event sourced + Kafka | Complete transaction history |
+| **Reporting** | Daily settlement reports | Merchant transparency |
+
+---
         this.processingId = event.getProcessingId();
         this.amount = event.getAmount();
         this.merchantId = event.getMerchantId();
@@ -1626,6 +2764,390 @@ public class PaymentProcessingSaga {
 - **Health checks** via Spring Actuator
 - **Docker** for containerization
 - **Kubernetes** manifests for deployment
+
+---
+
+## Testing and Verification
+
+### Complete End-to-End Payment Flow Test
+
+The project includes a comprehensive test script that verifies the entire payment saga:
+
+```bash
+# Run the complete E2E test
+./scripts/test-complete-flow.sh
+```
+
+**What This Script Does**:
+
+1. **Register Customer** → Creates customer account
+2. **Add Payment Method** → Registers credit card (with Luhn validation)
+3. **Authorize Payment** → Performs risk assessment
+4. **Wait for Processing** → Kafka event triggers processing automatically
+5. **Wait for Settlement** → Kafka event triggers settlement automatically
+6. **Verify Complete Flow** → Confirms all events and read models
+
+#### Test Script Breakdown
+
+```bash
+#!/bin/bash
+
+BASE_URL="http://localhost"
+CUSTOMER_API="$BASE_URL:8081/api/customers"
+AUTH_API="$BASE_URL:8082/api/authorizations"
+PROCESSING_API="$BASE_URL:8083/api/processing"
+SETTLEMENT_API="$BASE_URL:8084/api/settlements"
+
+echo "🧪 Starting Complete Payment Flow Test"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Step 1: Register Customer
+echo "📝 Step 1: Registering customer..."
+CUSTOMER_RESPONSE=$(curl -s -X POST $CUSTOMER_API/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "customerName": "John Doe"
+  }')
+
+CUSTOMER_ID=$(echo $CUSTOMER_RESPONSE | jq -r '.')
+echo "✅ Customer registered: $CUSTOMER_ID"
+
+# Wait for projection to update
+sleep 2
+
+# Step 2: Add Payment Method
+echo "📝 Step 2: Adding payment method..."
+PAYMENT_METHOD_ID=$(uuidgen)
+
+curl -s -X POST $CUSTOMER_API/$CUSTOMER_ID/payment-methods \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paymentMethodId": "'$PAYMENT_METHOD_ID'",
+    "cardNumber": "4532015112830366",
+    "cardholderName": "John Doe",
+    "expiryDate": "12/2025",
+    "cvv": "123"
+  }'
+
+echo "✅ Payment method added: $PAYMENT_METHOD_ID"
+sleep 2
+
+# Step 3: Authorize Payment
+echo "📝 Step 3: Authorizing payment..."
+AUTH_RESPONSE=$(curl -s -X POST $AUTH_API/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerId": "'$CUSTOMER_ID'",
+    "paymentMethodId": "'$PAYMENT_METHOD_ID'",
+    "amount": {
+      "amount": 100.00,
+      "currency": "USD"
+    },
+    "merchantId": "merchant-001"
+  }')
+
+AUTH_ID=$(echo $AUTH_RESPONSE | jq -r '.authorizationId')
+echo "✅ Payment authorized: $AUTH_ID"
+
+# Step 4: Wait for Kafka Event Processing
+echo "⏳ Step 4: Waiting for Processing Service (Kafka consumer)..."
+sleep 5  # Give Kafka consumer time to process PaymentAuthorizedEvent
+
+# Check processing status
+PROCESSING_STATUS=$(curl -s "$PROCESSING_API/authorization/$AUTH_ID")
+echo "📊 Processing Status:"
+echo "$PROCESSING_STATUS" | jq '.'
+
+PROCESSING_ID=$(echo $PROCESSING_STATUS | jq -r '.processingId')
+echo "✅ Payment processed: $PROCESSING_ID"
+
+# Step 5: Wait for Settlement
+echo "⏳ Step 5: Waiting for Settlement Service (Kafka consumer)..."
+sleep 5  # Give Kafka consumer time to process PaymentProcessedEvent
+
+# Check settlement status
+SETTLEMENT_STATUS=$(curl -s "$SETTLEMENT_API/processing/$PROCESSING_ID")
+echo "📊 Settlement Status:"
+echo "$SETTLEMENT_STATUS" | jq '.'
+
+SETTLEMENT_ID=$(echo $SETTLEMENT_STATUS | jq -r '.settlementId')
+echo "✅ Payment settled: $SETTLEMENT_ID"
+
+# Step 6: Verify Complete Flow
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🎉 COMPLETE SAGA VERIFIED!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Customer ID:    $CUSTOMER_ID"
+echo "Payment Method: $PAYMENT_METHOD_ID"
+echo "Authorization:  $AUTH_ID"
+echo "Processing:     $PROCESSING_ID"
+echo "Settlement:     $SETTLEMENT_ID"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Verify event store
+echo "📊 Verifying Event Store..."
+docker exec -it payment-gateway-postgres psql -U admin -d payment_gateway \
+  -c "SELECT event_type, COUNT(*) FROM domain_event_entry GROUP BY event_type;"
+
+echo "✅ Test Complete!"
+```
+
+### Manual Testing with cURL
+
+#### 1. Customer Registration
+
+```bash
+# Register a customer
+curl -X POST http://localhost:8081/api/customers/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alice@example.com",
+    "customerName": "Alice Smith"
+  }'
+
+# Response: "cust-1234-5678-90ab-cdef"
+
+# Get customer details
+curl http://localhost:8081/api/customers/cust-1234-5678-90ab-cdef
+```
+
+#### 2. Payment Method Registration
+
+```bash
+# Add payment method (valid Visa card)
+curl -X POST http://localhost:8081/api/customers/cust-1234/payment-methods \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paymentMethodId": "pm-1234",
+    "cardNumber": "4532015112830366",
+    "cardholderName": "Alice Smith",
+    "expiryDate": "12/2025",
+    "cvv": "123"
+  }'
+
+# Get all payment methods
+curl http://localhost:8081/api/customers/cust-1234/payment-methods
+```
+
+#### 3. Payment Authorization
+
+```bash
+# Authorize payment
+curl -X POST http://localhost:8082/api/authorizations/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerId": "cust-1234",
+    "paymentMethodId": "pm-1234",
+    "amount": {
+      "amount": 250.00,
+      "currency": "USD"
+    },
+    "merchantId": "merchant-001"
+  }'
+
+# Get authorization status
+curl http://localhost:8082/api/authorizations/auth-5678
+```
+
+#### 4. Check Processing (Automatic via Kafka)
+
+```bash
+# Wait 3-5 seconds for Kafka consumer to trigger processing
+
+# Check processing status by authorization ID
+curl http://localhost:8083/api/processing/authorization/auth-5678
+
+# Get processing details
+curl http://localhost:8083/api/processing/proc-9012
+```
+
+#### 5. Check Settlement (Automatic via Kafka)
+
+```bash
+# Wait 3-5 seconds for Kafka consumer to trigger settlement
+
+# Check settlement by processing ID
+curl http://localhost:8084/api/settlements/processing/proc-9012
+
+# Get batch summary
+curl http://localhost:8084/api/settlements/batch/BATCH-merchant-001-2025-11-05
+
+# Get daily report
+curl http://localhost:8084/api/settlements/report/daily?date=2025-11-06
+```
+
+### Kafka Event Monitoring
+
+#### View Events in Kafka
+
+```bash
+# Connect to Kafka container
+docker exec -it payment-gateway-kafka bash
+
+# List topics
+kafka-topics --list --bootstrap-server localhost:9092
+
+# Consume events from beginning
+kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic payment-events \
+  --from-beginning \
+  --property print.key=true
+
+# Expected output:
+# CustomerRegisteredEvent: {"customerId":"cust-1234","email":"alice@example.com",...}
+# PaymentMethodAddedEvent: {"paymentMethodId":"pm-1234","cardNumber":"4532..."}
+# PaymentAuthorizedEvent: {"authorizationId":"auth-5678","amount":250.00,...}
+# PaymentProcessedEvent: {"processingId":"proc-9012","transactionId":"TXN-...",...}
+# PaymentSettledEvent: {"settlementId":"sett-3456","batchId":"BATCH-...",...}
+```
+
+### Database Verification
+
+#### Event Store Inspection
+
+```bash
+# Connect to PostgreSQL
+docker exec -it payment-gateway-postgres psql -U admin -d payment_gateway
+
+# View all events
+SELECT 
+    aggregate_identifier,
+    event_type,
+    timestamp,
+    payload 
+FROM domain_event_entry 
+ORDER BY timestamp DESC 
+LIMIT 10;
+
+# Count events by type
+SELECT event_type, COUNT(*) 
+FROM domain_event_entry 
+GROUP BY event_type;
+
+# Expected output:
+#            event_type            | count
+# ---------------------------------+-------
+#  CustomerRegisteredEvent         |     5
+#  PaymentMethodAddedEvent         |     3
+#  PaymentAuthorizedEvent          |     8
+#  PaymentProcessedEvent           |     7
+#  PaymentSettledEvent             |     6
+```
+
+#### Read Model Inspection
+
+```bash
+# Customer read model
+SELECT customer_id, email, customer_name, registered_at 
+FROM customer_read_model;
+
+# Payment methods
+SELECT payment_method_id, masked_card_number, cardholder_name 
+FROM payment_method_read_model;
+
+# Authorizations
+SELECT authorization_id, customer_id, amount, status, authorized_at 
+FROM authorization_read_model;
+
+# Processing
+SELECT processing_id, authorization_id, transaction_id, status, processed_at 
+FROM processing_read_model;
+
+# Settlement
+SELECT 
+    settlement_id, 
+    gross_amount, 
+    platform_fee, 
+    merchant_payout, 
+    batch_id, 
+    settlement_date 
+FROM settlement_read_model;
+```
+
+### Health Checks
+
+```bash
+# Check all services
+curl http://localhost:8081/actuator/health | jq '.'  # Customer
+curl http://localhost:8082/actuator/health | jq '.'  # Authorization
+curl http://localhost:8083/actuator/health | jq '.'  # Processing
+curl http://localhost:8084/actuator/health | jq '.'  # Settlement
+
+# Expected response:
+{
+  "status": "UP",
+  "components": {
+    "db": {
+      "status": "UP",
+      "details": {
+        "database": "PostgreSQL",
+        "validationQuery": "isValid()"
+      }
+    },
+    "kafka": {
+      "status": "UP",
+      "details": {
+        "clusterId": "kafka-cluster-1"
+      }
+    }
+  }
+}
+```
+
+### Service Logs
+
+```bash
+# View logs for each service
+docker-compose logs -f customer-service
+docker-compose logs -f authorization-service
+docker-compose logs -f processing-service
+docker-compose logs -f settlement-service
+
+# View Kafka logs
+docker-compose logs -f kafka
+
+# Expected log flow:
+# customer-service: "📤 Publishing CustomerRegisteredEvent to Kafka"
+# authorization-service: "📤 Publishing PaymentAuthorizedEvent to Kafka"
+# processing-service: "📥 Received PaymentAuthorizedEvent from Kafka"
+# processing-service: "🛡️ Fraud check passed"
+# processing-service: "✅ External processor success"
+# processing-service: "📤 Publishing PaymentProcessedEvent to Kafka"
+# settlement-service: "📥 Received PaymentProcessedEvent from Kafka"
+# settlement-service: "💰 Calculated fees: Platform=$3.20, Net=$96.80"
+# settlement-service: "✅ Bank transfer successful"
+```
+
+### Performance Testing
+
+```bash
+# Load test with Apache Bench (100 requests, 10 concurrent)
+ab -n 100 -c 10 -p customer.json -T application/json \
+  http://localhost:8081/api/customers/register
+
+# Monitor Kafka lag
+docker exec payment-gateway-kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --group processing-service-group
+
+# Expected output:
+# GROUP                  TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+# processing-service     payment-events  0          1523            1523            0
+# settlement-service     payment-events  0          1523            1523            0
+```
+
+### Common Issues and Troubleshooting
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| **Kafka Not Connected** | "Failed to publish event to Kafka" | `docker-compose restart kafka` |
+| **Database Lock** | "Could not acquire lock" | `docker-compose restart postgres` |
+| **Consumer Lag** | Processing delayed by >10 seconds | Check `kafka-consumer-groups` and increase service instances |
+| **Event Store Full** | Slow queries | Implement snapshots (aggregate rebuild optimization) |
+| **Service Unhealthy** | `"status": "DOWN"` | Check logs: `docker-compose logs <service>` |
 
 ---
 
