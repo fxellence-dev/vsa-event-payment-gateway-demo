@@ -48,16 +48,27 @@ public class PaymentCard {
     }
 
     private void validateCard() {
-        if (!isValidLuhn(cardNumber)) {
-            throw new IllegalArgumentException("Invalid card number");
+        // Skip validation for masked card numbers (e.g., "****1234")
+        if (cardNumber != null && !cardNumber.contains("*")) {
+            if (!isValidLuhn(cardNumber)) {
+                throw new IllegalArgumentException("Invalid card number");
+            }
         }
     }
 
     private boolean isValidLuhn(String cardNumber) {
+        // Skip validation for masked card numbers
+        if (cardNumber == null || cardNumber.contains("*")) {
+            return true;
+        }
+        
+        // Remove any non-digit characters
+        String cleanNumber = cardNumber.replaceAll("\\D", "");
+        
         int sum = 0;
         boolean alternate = false;
-        for (int i = cardNumber.length() - 1; i >= 0; i--) {
-            int n = Integer.parseInt(cardNumber.substring(i, i + 1));
+        for (int i = cleanNumber.length() - 1; i >= 0; i--) {
+            int n = Integer.parseInt(cleanNumber.substring(i, i + 1));
             if (alternate) {
                 n *= 2;
                 if (n > 9) {
@@ -82,6 +93,12 @@ public class PaymentCard {
     }
 
     public CardType getCardType() {
+        // For masked cards, assume VISA as default (most common card type)
+        // In a real system, card type would be stored separately
+        if (cardNumber.contains("*")) {
+            return CardType.VISA;
+        }
+        
         if (cardNumber.startsWith("4")) return CardType.VISA;
         if (cardNumber.startsWith("5") || cardNumber.startsWith("2")) return CardType.MASTERCARD;
         if (cardNumber.startsWith("3")) return CardType.AMEX;

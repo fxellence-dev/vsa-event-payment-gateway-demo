@@ -1,0 +1,92 @@
+[H[2J[3J
+[1m╔════════════════════════════════════════════════════════════════╗[0m
+[1m║                                                                ║[0m
+[1m║  [0;36mVSA Payment Gateway - Enhanced E2E Test Suite[0m                [1m║[0m
+[1m║                                                                ║[0m
+[1m╚════════════════════════════════════════════════════════════════╝[0m
+
+[0;34mTest Run: 2025-11-05 13:57:36[0m
+[0;34mMode: Comprehensive Testing with Infrastructure Validation[0m
+
+
+[1m╔════════════════════════════════════════════════════════════════╗[0m
+[1m║                                                                ║[0m
+[1m║  [0;36mInfrastructure Health Checks[0m                                 [1m║[0m
+[1m║                                                                ║[0m
+[1m╚════════════════════════════════════════════════════════════════╝[0m
+
+
+[1m═══ PostgreSQL Database ═══[0m
+
+[0;32m✓[0m PostgreSQL is running and accepting connections
+[0;31m✗[0m Database 'payment_gateway_db' is not accessible
+[1;33m⚠[0m No microservice schemas found yet
+
+[1m═══ Zookeeper ═══[0m
+
+[0;31m✗[0m Zookeeper is not responding
+
+[1m═══ Apache Kafka ═══[0m
+
+[0;32m✓[0m Kafka broker is running and accepting connections
+[0;32m✓[0m Kafka topics found:
+[0;34mℹ[0m   - payment-events
+
+[1m═══ Docker Containers ═══[0m
+
+[0;32m✓[0m vsa-processing-service: Up 4 minutes (healthy)
+[0;32m✓[0m vsa-settlement-service: Up 4 minutes (healthy)
+[0;32m✓[0m vsa-authorization-service: Up 4 minutes (healthy)
+[0;32m✓[0m vsa-customer-service: Up 42 minutes (healthy)
+[0;32m✓[0m vsa-orchestration-service: Up 23 hours (healthy)
+[0;32m✓[0m vsa-kafka: Up 24 hours (healthy)
+[0;32m✓[0m vsa-zookeeper: Up 24 hours (healthy)
+[0;32m✓[0m vsa-postgres: Up 24 hours (healthy)
+
+
+[1m═══ Infrastructure Health Summary ═══[0m
+
+[0;31m✗[0m Some infrastructure components are unhealthy:
+[0;31m✗[0m   - PostgreSQL
+[0;31m✗[0m   - Zookeeper
+[1;33m⚠[0m Tests will continue but may fail
+
+
+[1m╔════════════════════════════════════════════════════════════════╗[0m
+[1m║                                                                ║[0m
+[1m║  [0;36mMicroservices Health Checks[0m                                  [1m║[0m
+[1m║                                                                ║[0m
+[1m╚════════════════════════════════════════════════════════════════╝[0m
+
+[0;32m✓[0m Customer Service (8081) is healthy
+[0;32m✓[0m Authorization Service (8082) is healthy
+[0;32m✓[0m Processing Service (8083) is healthy
+[0;32m✓[0m Settlement Service (8084) is healthy
+[0;32m✓[0m Orchestration Service (8085) is healthy
+[0;32m✓[0m All microservices are healthy and ready for testing ✓
+
+
+[1m╔════════════════════════════════════════════════════════════════╗[0m
+[1m║                                                                ║[0m
+[1m║  [0;36mTest Scenario: Complete Payment Flow with Validation[0m         [1m║[0m
+[1m║                                                                ║[0m
+[1m╚════════════════════════════════════════════════════════════════╝[0m
+
+[0;34mℹ[0m Test Data Generated:
+[0;34mℹ[0m   Customer ID: cust-17623510593N-D8007B95
+[0;34mℹ[0m   Email: test.user-17623510593N@test.example.com
+[0;34mℹ[0m   Authorization ID: auth-17623510593N-D7166F91
+[0;34mℹ[0m   Payment ID: pay-17623510593N-70D29FDE
+
+[1m═══ Step 1: Register Customer ═══[0m
+
+[0;32m✓[0m Customer registered successfully
+[0;34mℹ[0m Waiting for event to be published to Kafka...
+[0;34mℹ[0m Checking Kafka for CustomerRegisteredEvent for cust-17623510593N-D8007B95...
+[0;32m✓[0m Found CustomerRegisteredEvent for cust-17623510593N-D8007B95 in Kafka (attempt 1)
+[1;33m⚠[0m Skipping database verification (PostgreSQL not healthy)
+
+[1m═══ Step 2: Add Payment Method ═══[0m
+
+[0;32m✓[0m Payment method added successfully
+[0;34mℹ[0m Waiting for event to be published to Kafka...

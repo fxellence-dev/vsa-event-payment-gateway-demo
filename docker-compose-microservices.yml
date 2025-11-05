@@ -1,0 +1,234 @@
+# VSA Payment Gateway - Microservices Deployment
+# Docker Compose configuration for running all services independently
+#
+# This compose file creates:
+# - Infrastructure: PostgreSQL, Zookeeper, Kafka
+# - Microservices: Customer, Authorization, Processing, Settlement, Orchestration (5 services)
+#
+# Usage:
+#   Start all services: docker-compose -f docker-compose-microservices.yml up -d
+#   Stop all services: docker-compose -f docker-compose-microservices.yml down
+#   View logs: docker-compose -f docker-compose-microservices.yml logs -f <service-name>
+#   Scale a service: docker-compose -f docker-compose-microservices.yml up -d --scale customer-service=3
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # INFRASTRUCTURE SERVICES
+  # =============================================================================
+  
+  # PostgreSQL Database (Shared by all microservices)
+  postgres:
+    image: postgres:15-alpine
+    container_name: vsa-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: payment_gateway
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - vsa-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper (Required for Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: vsa-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - vsa-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka Message Broker (Event Bus for microservices)
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: vsa-kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - vsa-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # =============================================================================
+  # MICROSERVICES
+  # =============================================================================
+
+  # Customer Service (Port 8081)
+  # Handles customer registration and payment method management
+  customer-service:
+    build:
+      context: .
+      dockerfile: customer-service/Dockerfile
+    container_name: vsa-customer-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: microservices
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SERVER_PORT: 8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - vsa-network
+    restart: unless-stopped
+
+  # Authorization Service (Port 8082)
+  # Handles payment authorization, fraud detection, and voids
+  authorization-service:
+    build:
+      context: .
+      dockerfile: authorization-service/Dockerfile
+    container_name: vsa-authorization-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE: microservices
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SERVER_PORT: 8082
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - vsa-network
+    restart: unless-stopped
+
+  # Processing Service (Port 8083)
+  # Handles payment processing with external processors (Stripe/Adyen simulation)
+  processing-service:
+    build:
+      context: .
+      dockerfile: processing-service/Dockerfile
+    container_name: vsa-processing-service
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_PROFILES_ACTIVE: microservices
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SERVER_PORT: 8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - vsa-network
+    restart: unless-stopped
+
+  # Settlement Service (Port 8084)
+  # Handles settlement processing with bank/ACH integration simulation
+  settlement-service:
+    build:
+      context: .
+      dockerfile: settlement-service/Dockerfile
+    container_name: vsa-settlement-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_PROFILES_ACTIVE: microservices
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SERVER_PORT: 8084
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - vsa-network
+    restart: unless-stopped
+
+  # Orchestration Service (Port 8085)
+  # Handles saga orchestration for payment processing workflow
+  orchestration-service:
+    build:
+      context: .
+      dockerfile: orchestration-service/Dockerfile
+    container_name: vsa-orchestration-service
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_PROFILES_ACTIVE: microservices
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payment_gateway
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SERVER_PORT: 8085
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      authorization-service:
+        condition: service_started
+      processing-service:
+        condition: service_started
+      settlement-service:
+        condition: service_started
+    networks:
+      - vsa-network
+    restart: unless-stopped
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  vsa-network:
+    driver: bridge
+    name: vsa-payment-gateway-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  postgres-data:
+    name: vsa-postgres-data

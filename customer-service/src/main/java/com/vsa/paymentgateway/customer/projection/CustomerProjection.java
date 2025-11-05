@@ -25,16 +25,19 @@ public class CustomerProjection {
 
     @EventHandler
     public void on(CustomerRegisteredEvent event) {
-        CustomerReadModel customer = new CustomerReadModel(
-            event.getCustomerId(),
-            event.getCustomerName(),
-            event.getEmail(),
-            event.getPhoneNumber(),
-            event.getAddress(),
-            event.getTimestamp()
-        );
-        
-        customerRepository.save(customer);
+        // Idempotent: only create if doesn't exist
+        if (!customerRepository.existsById(event.getCustomerId())) {
+            CustomerReadModel customer = new CustomerReadModel(
+                event.getCustomerId(),
+                event.getCustomerName(),
+                event.getEmail(),
+                event.getPhoneNumber(),
+                event.getAddress(),
+                event.getTimestamp()
+            );
+            
+            customerRepository.save(customer);
+        }
     }
 
     @EventHandler
