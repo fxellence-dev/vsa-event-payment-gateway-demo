@@ -1190,19 +1190,19 @@ public class PaymentEventConsumer {
 ```mermaid
 flowchart LR
     subgraph "Kafka Partitioning"
-        E1[Event: customerId=123]
-        E2[Event: customerId=456]
-        E3[Event: customerId=123]
-        E4[Event: customerId=789]
+        E1["Event: customerId=123"]
+        E2["Event: customerId=456"]
+        E3["Event: customerId=123"]
+        E4["Event: customerId=789"]
         
-        P0[Partition 0]
-        P1[Partition 1]
-        P2[Partition 2]
+        P0["Partition 0"]
+        P1["Partition 1"]
+        P2["Partition 2"]
         
-        E1 -->|hash(123) % 3 = 0| P0
-        E2 -->|hash(456) % 3 = 1| P1
-        E3 -->|hash(123) % 3 = 0| P0
-        E4 -->|hash(789) % 3 = 2| P2
+        E1 -->|"hash mod 3 = 0"| P0
+        E2 -->|"hash mod 3 = 1"| P1
+        E3 -->|"hash mod 3 = 0"| P0
+        E4 -->|"hash mod 3 = 2"| P2
     end
     
     subgraph "Ordering Guarantee"
